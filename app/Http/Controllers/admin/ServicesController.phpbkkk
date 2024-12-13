@@ -1,0 +1,342 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Models\CleaningService;
+use App\Models\ServiceCategories;
+use App\Models\Service;
+use App\Models\Categories;
+use App\Models\ProductModel;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Validator;
+use DB;
+
+class ServicesController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index()
+    {
+        //
+        $page_heading = "Services";
+        $categories = Service::where(['deleted' => 0])->orderBy('id', 'desc')->get();
+        foreach ($categories as $key => $cat) {
+
+            $categories[$key]->categories_selected = DB::table('service_category_selected')->join('service_category', 'service_category.id', '=', 'service_category_selected.category_id')->where('service_id', '=', $cat->id)->get();
+        }
+
+        return view('admin.service.list', compact('page_heading', 'categories'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create()
+    {
+        $page_heading = "Services";
+        $mode = "create";
+        $id = "";
+        $name = "";
+        $parent_id = "";
+        $image = "";
+        $active = "1";
+        $building_type = "";
+        $banner_image = "";
+        $category = [];
+        $description = "";
+        $category = '';
+        $included = '';
+        $serviceprice = "";
+        $service_type = "";
+        $contract_type = "";
+        $time = "";
+        $category_ids = [];
+
+        $parent_categories_list = $parent_categories = ServiceCategories::where(['deleted' => 0, 'active' => 1, 'parent_id' => 0])->get()->toArray();
+        $parent_categories_list = ServiceCategories::where(['deleted' => 0, 'active' => 1])->where('parent_id', '!=', 0)->get()->toArray();
+
+        $parent_categories = array_column($parent_categories, 'name', 'id');
+        asort($parent_categories);
+        $category_list = $parent_categories;
+
+        $sub_categories = [];
+        foreach ($parent_categories_list as $row) {
+            $sub_categories[$row['parent_id']][$row['id']] = $row['name'];
+        }
+        $sub_category_list = $sub_categories;
+
+
+        return view("admin.service.create", compact('page_heading', 'category', 'mode', 'id', 'name', 'parent_id', 'image', 'active', 'banner_image', 'description', 'category', 'category_list', 'serviceprice', 'parent_categories_list', 'sub_categories', 'sub_category_list', 'category_ids', 'included', 'building_type', 'service_type', 'contract_type','time'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+//        dd($request->all());
+        $status = "0";
+        $message = "";
+        $o_data = [];
+        $errors = [];
+        $redirectUrl = '';
+
+        $validator = Validator::make($request->all(), ['name' => 'required', 'building_type' => 'required',]);
+        if ($validator->fails()) {
+            $status = "0";
+            $message = "Validation error occured";
+            $errors = $validator->messages();
+        } else {
+            $input = $request->all();
+            $check_exist = Service::where(['deleted' => 0, 'name' => $request->name])->where('id', '!=', $request->id)->get()->toArray();
+            if (empty($check_exist)) {
+
+//                $ins = ['name' => $request->name, 'building_type' => $request->building_type, 'updated_at' => gmdate('Y-m-d H:i:s'), 'service_price' => $request->price ?? 0, 'description' => $request->description, 'active' => $request->active, 'included' => $request->included, 'service_type' => $request->service_type, 'contract_type' => $request->contract_type];
+                $new_time = date('h:i A',strtotime($request->time));
+                $ins = ['name' => $request->name, 'building_type' => $request->building_type, 'updated_at' => gmdate('Y-m-d H:i:s'), 'service_price' => $request->price ?? 0, 'description' => $request->description, 'active' => $request->active, 'included' => $request->included_text,'service_type' => $request->service_type, 'contract_type' => $request->contract_type,'time' => $new_time];
+
+
+                if ($request->file("image")) {
+                    $response = image_save($request, config('global.service_image_upload_dir'), 'image');
+                    if ($response['status']) {
+                        $ins['image'] = $response['link'];
+                    }
+                }
+//                $fileName = time().'.'.$request->document->extension();
+//
+//                $request->document->move(public_path('uploads'), $fileName);
+//                dd($fileName);
+                if ($request->file("document")) {
+                    $response = image_upload($request, config('global.service_image_upload_dir'), 'document');
+                    if ($response['status']) {
+                        $ins['document'] = $response['link'];
+                    }
+                }
+                if ($request->id != "") {
+                    $category = Service::find($request->id);
+                    $category->update($ins);
+                    $inid = $request->id;
+                    $status = "1";
+                    $message = "Services updated succesfully";
+                } else {
+                    $ins['created_at'] = gmdate('Y-m-d H:i:s');
+                    $service = Service::create($ins);
+                    $inid = $service->id;
+                    $status = "1";
+                    $message = "Services added successfully";
+                }
+
+                $categories = $request->category_ids;
+
+
+                if (!empty($categories)) {
+                    $all_categories = ServiceCategories::getCategoriesCondition($categories);
+                    $all_categories = array_column($all_categories, 'service_category_parent_id', 'service_category_id');
+                    foreach ($categories as $t_cat) {
+                        $p_cat_id = $all_categories[$t_cat] ?? 0;
+                        do {
+                            if ($p_cat_id > 0) {
+                                $categories[] = $p_cat_id;
+                                $p_cat_id = $all_categories[$p_cat_id] ?? 0;
+                            }
+                        } while ($p_cat_id > 0);
+                    }
+                    $categories = array_filter($categories);
+                    $categories = array_unique($categories);
+                }
+
+                if (!empty($categories)) {
+                    DB::table('service_category_selected')->where('service_id', '=', $inid)->delete();
+                    foreach ($categories as $cat) {
+                        DB::table('service_category_selected')->insert(['category_id' => $cat, 'service_id' => $inid]);
+                    }
+                }
+
+
+            } else {
+                $status = "0";
+                $message = "Name should be unique";
+                $errors['name'] = $request->name . " already added";
+            }
+
+        }
+        echo json_encode(['status' => $status, 'message' => $message, 'errors' => $errors]);
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param int $id
+     * @return \Illuminate\Http\Response
+     */
+    public function show($id)
+    {
+        //
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param int $id
+     * @return \Illuminate\Http\Response
+     */
+    public function edit($id)
+    {
+        //
+        $included = '';
+        $service = Service::find($id);
+        $product_categories = ServiceCategories::get_service_categories($id);
+        $category_ids = array_column($product_categories, 'category_id');
+        $included = $service->included ?? '';
+        $building_type = $service->building_type ?? '';
+        $service_type = $service->service_type?? '';
+        $contract_type = $service->contract_type?? '';
+
+        if ($service) {
+            $page_heading = "Services";
+            $mode = "edit";
+            $serviceprice = $service->service_price;
+            $id = $service->id;
+            $name = $service->name;
+            $parent_id = $service->parent_id;
+            $image = $service->image;
+            $active = $service->active;
+            $description = $service->description;
+            $category = $service->category;
+            $time = date('h:i A',strtotime($service->time));
+//            $building_type       = $category->building_type ?? '';
+//            $included       = $category->included ?? '';
+
+            $banner_image = "";
+
+            $parent_categories_list = $parent_categories = ServiceCategories::where(['deleted' => 0, 'active' => 1, 'parent_id' => 0])->get()->toArray();
+            $parent_categories_list = ServiceCategories::where(['deleted' => 0, 'active' => 1])->where('parent_id', '!=', 0)->get()->toArray();
+
+            $parent_categories = array_column($parent_categories, 'name', 'id');
+            asort($parent_categories);
+            $category_list = $parent_categories;
+
+            $sub_categories = [];
+            foreach ($parent_categories_list as $row) {
+                $sub_categories[$row['parent_id']][$row['id']] = $row['name'];
+            }
+            $sub_category_list = $sub_categories;
+
+            return view("admin.service.create", compact('page_heading', 'category', 'mode', 'id', 'name', 'parent_id', 'image', 'active', 'banner_image', 'description', 'category', 'serviceprice', 'parent_categories_list', 'sub_category_list', 'category_list', 'category_ids', 'building_type', 'included', 'service_type','contract_type','time'));
+        } else {
+            abort(404);
+        }
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @param int $id
+     * @return \Illuminate\Http\Response
+     */
+    public function update(Request $request, $id)
+    {
+        //
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param int $id
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy($id)
+    {
+        $status = "0";
+        $message = "";
+        $o_data = [];
+        $category = Service::find($id);
+        if ($category) {
+            $category->deleted = 1;
+            $category->active = 0;
+            $category->updated_at = gmdate('Y-m-d H:i:s');
+            $category->save();
+            $status = "1";
+            $message = "Services removed successfully";
+        } else {
+            $message = "Sorry!.. You cant do this?";
+        }
+
+        echo json_encode(['status' => $status, 'message' => $message, 'o_data' => $o_data]);
+
+    }
+
+    public function change_status(Request $request)
+    {
+        $status = "0";
+        $message = "";
+        if (Service::where('id', $request->id)->update(['active' => $request->status])) {
+            $status = "1";
+            $msg = "Successfully activated";
+            if (!$request->status) {
+                $msg = "Successfully deactivated";
+            }
+            $message = $msg;
+        } else {
+            $message = "Something went wrong";
+        }
+        echo json_encode(['status' => $status, 'message' => $message]);
+    }
+
+    public function sort(Request $request)
+    {
+        if ($request->ajax()) {
+            $status = 0;
+            $message = '';
+
+            $items = $request->items;
+            $items = explode(",", $items);
+            $sorted = ServiceCategories::sort_item($items);
+            if ($sorted) {
+                $status = 1;
+            }
+
+            echo json_encode(['status' => $status, 'message' => $message]);
+
+        } else {
+            $page_heading = "Sort Categories";
+
+            $list = Categories::where(['deleted' => 0, 'parent_id' => 0])->get();
+
+            return view("admin.sort", compact('page_heading', 'list'));
+        }
+    }
+//    public function getCleaningService($id)
+//    {
+////        dd($id);
+////        $serviceid = DB::table('service_category')->where('id', $id)->first();
+////        dd($serviceid);
+////
+////        $message = "";
+//        if ($id == 12) {
+//
+//            $empData['data'] = CleaningService::all();
+//            $message = "success";
+//
+////            echo json_encode(['message' => $message, 'empData' => $empData]);
+//
+//            return response()->json($empData);
+//        }else {
+//            $message = "error";
+//            echo json_encode(['message' => $message]);
+//        }
+
+
+
+
+}
